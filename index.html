@@ -8,19 +8,21 @@
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body { display: flex; height: 100vh; background: #121212; color: #fff; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
-    #sidebar { width: 300px; background: #1e1e1e; display: flex; flex-direction: column; border-right: 1px solid #2a2a2a; }
-    #header { padding: 16px; border-bottom: 1px solid #2a2a2a; }
-    #header h2 { font-size: 1.1rem; margin-bottom: 10px; color: #4dabf7; }
-    #search { width: 100%; padding: 8px 12px; border-radius: 6px; border: 1px solid #333; background: #2b2b2b; color: #fff; outline: none; }
+    #sidebar { width: 320px; background: #1a1a1a; display: flex; flex-direction: column; border-right: 1px solid #2d2d2d; }
+    #header { padding: 16px; border-bottom: 1px solid #2d2d2d; }
+    #header h2 { font-size: 1.15rem; margin-bottom: 10px; color: #339af0; }
+    #search { width: 100%; padding: 8px 12px; border-radius: 6px; border: 1px solid #3d3d3d; background: #262626; color: #fff; outline: none; }
     #channel-list { flex: 1; overflow-y: auto; list-style: none; }
-    .channel-item { padding: 12px 16px; cursor: pointer; border-bottom: 1px solid #262626; transition: background 0.2s; }
-    .channel-item:hover { background: #2a2a2a; }
-    .channel-item.active { background: #1971c2; color: #fff; font-weight: bold; }
-    #main { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; background: #000; position: relative; }
+    .channel-item { padding: 12px 16px; cursor: pointer; border-bottom: 1px solid #242424; transition: background 0.2s; font-size: 0.95rem; }
+    .channel-item:hover { background: #2b2b2b; }
+    .channel-item.active { background: #1864ab; color: #fff; font-weight: bold; }
+    #main { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; background: #000; }
     video { width: 100%; height: 100%; max-height: 100vh; outline: none; }
-    #custom-source { padding: 12px 16px; border-top: 1px solid #2a2a2a; display: flex; gap: 8px; }
-    #source-input { flex: 1; padding: 6px 10px; border-radius: 4px; border: 1px solid #333; background: #2b2b2b; color: #fff; font-size: 0.85rem; }
-    #source-btn { padding: 6px 12px; background: #228be6; color: #fff; border: none; border-radius: 4px; cursor: pointer; font-size: 0.85rem; }
+    #custom-source { padding: 12px; border-top: 1px solid #2d2d2d; display: flex; gap: 8px; flex-direction: column; }
+    .input-row { display: flex; gap: 6px; }
+    #source-input { flex: 1; padding: 7px 10px; border-radius: 4px; border: 1px solid #3d3d3d; background: #262626; color: #fff; font-size: 0.85rem; outline: none; }
+    .btn { padding: 7px 12px; background: #228be6; color: #fff; border: none; border-radius: 4px; cursor: pointer; font-size: 0.85rem; }
+    .btn:hover { background: #1c7ed6; }
   </style>
 </head>
 <body>
@@ -31,8 +33,10 @@
     </div>
     <ul id="channel-list"></ul>
     <div id="custom-source">
-      <input type="text" id="source-input" placeholder="输入自定义 M3U 源地址">
-      <button id="source-btn">导入</button>
+      <div class="input-row">
+        <input type="text" id="source-input" placeholder="输入 M3U 列表或 m3u8 单流链接">
+        <button class="btn" id="play-btn">播放 / 导入</button>
+      </div>
     </div>
   </div>
 
@@ -41,13 +45,8 @@
   </div>
 
   <script>
-    const defaultChannels = [
-      { name: "CCTV-1 综合", url: "https://live.fanmingming.com/tv/m3u/ipv6.m3u" },
-      { name: "CCTV-13 新闻", url: "https://cctv13.live.cntv.myalicdn.com/cctv13_2/index.m3u8" },
-      { name: "CCTV-4 中文国际", url: "https://cctv4.live.cntv.myalicdn.com/cctv4_2/index.m3u8" },
-      { name: "湖南卫视", url: "https://live.fanmingming.com/tv/m3u/ipv6.m3u" },
-      { name: "浙江卫视", url: "https://live.fanmingming.com/tv/m3u/ipv6.m3u" }
-    ];
+    // 免费公共跨域反向代理
+    const PROXY = "https://api.allorigins.win/raw?url=";
 
     let channels = [];
     const video = document.getElementById('video');
@@ -55,16 +54,37 @@
     const searchInput = document.getElementById('search');
     let hls = null;
 
-    function playChannel(url, itemEl) {
+    function playStream(url, itemEl) {
       document.querySelectorAll('.channel-item').forEach(el => el.classList.remove('active'));
       if (itemEl) itemEl.classList.add('active');
 
       if (Hls.isSupported()) {
         if (hls) hls.destroy();
-        hls = new Hls();
+        hls = new Hls({
+          enableWorker: true,
+          lowLatencyMode: true
+        });
         hls.loadSource(url);
         hls.attachMedia(video);
         hls.on(Hls.Events.MANIFEST_PARSED, () => video.play().catch(() => {}));
+        hls.on(Hls.Events.ERROR, (event, data) => {
+          if (data.fatal) {
+            switch (data.type) {
+              case Hls.ErrorTypes.NETWORK_ERROR:
+                // 如果直连遇阻，自动尝试反向代理通道
+                if (!url.startsWith(PROXY)) {
+                  console.log("直连遇阻，改用代理通道播放");
+                  playStream(PROXY + encodeURIComponent(url), itemEl);
+                } else {
+                  hls.startLoad();
+                }
+                break;
+              default:
+                hls.destroy();
+                break;
+            }
+          }
+        });
       } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
         video.src = url;
         video.play().catch(() => {});
@@ -77,14 +97,16 @@
         const li = document.createElement('li');
         li.className = 'channel-item';
         li.textContent = ch.name;
-        li.onclick = () => playChannel(ch.url, li);
+        li.onclick = () => playStream(ch.url, li);
         channelList.appendChild(li);
       });
     }
 
     async function loadM3U(url) {
       try {
-        const res = await fetch(url);
+        // 通过代理拉取 M3U 文件，彻底解决 CORS 拦截
+        const proxyUrl = PROXY + encodeURIComponent(url);
+        const res = await fetch(proxyUrl);
         const text = await res.text();
         const lines = text.split('\n');
         channels = [];
@@ -95,20 +117,27 @@
             const parts = line.split(',');
             currentName = parts[parts.length - 1].trim();
           } else if (line && !line.startsWith('#')) {
-            channels.push({ name: currentName || '未知频道', url: line });
+            channels.push({ name: currentName || '未命名频道', url: line });
             currentName = '';
           }
         }
         renderChannels(channels);
-        if (channels.length > 0) playChannel(channels[0].url, channelList.firstChild);
+        if (channels.length > 0) playStream(channels[0].url, channelList.firstChild);
       } catch (err) {
-        alert('加载直播源失败，请确认链接是否支持跨域访问');
+        console.error(err);
       }
     }
 
-    document.getElementById('source-btn').onclick = () => {
-      const url = document.getElementById('source-input').value.trim();
-      if (url) loadM3U(url);
+    document.getElementById('play-btn').onclick = () => {
+      const input = document.getElementById('source-input').value.trim();
+      if (!input) return;
+
+      // 如果直接粘贴的是 .m3u8 视频流，直接播放，不进行列表解析
+      if (input.includes('.m3u8')) {
+        playStream(input);
+      } else {
+        loadM3U(input);
+      }
     };
 
     searchInput.oninput = (e) => {
@@ -116,8 +145,8 @@
       renderChannels(channels.filter(c => c.name.toLowerCase().includes(q)));
     };
 
-    // 默认加载国内公共直播源
-    loadM3U('https://live.fanmingming.com/tv/m3u/ipv6.m3u');
+    // 默认加载全球精选中文频道列表
+    loadM3U('https://iptv-org.github.io/iptv/languages/zho.m3u');
   </script>
 </body>
 </html>
